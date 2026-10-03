@@ -1,18 +1,15 @@
 {
   "builds": [
-    {
-      "src": "app.py",
-      "use": "@vercel/python"
-    }
+    { "src": "app.py", "use": "@vercel/python" }
   ],
   "routes": [
+    { "src": "/api/(.*)", "dest": "app.py" },
+    { "src": "/(.*)", "dest": "app.py" }
+  ],
+  "crons": [
     {
-      "src": "/api/(.*)",
-      "dest": "app.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "app.py"
+      "path": "/api/haze/collect",
+      "schedule": "5 * * * *"
     }
   ]
 }
