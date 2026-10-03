@@ -1,0 +1,13 @@
+[Unit]
+Description=Haze Monitor API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/seongper/haze-monitor
+ExecStart=/home/seongper/haze-monitor/.venv/bin/python /home/seongper/haze-monitor/api.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
