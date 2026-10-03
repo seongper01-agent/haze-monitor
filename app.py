@@ -134,51 +134,6 @@ def history():
         return jsonify({"region": region, "points": [], "error": str(e)})
 
 
-@app.route("/api/haze/collect")
-def collect():
-    """Cron endpoint — called by Vercel at 5 past the hour."""
-    secret = request.headers.get("Authorization", "").replace("Bearer ", "")
-    expected = os.environ.get("CRON_SECRET", "")
-    if expected and secret != expected:
-        return jsonify({"error": "unauthorized"}), 401
-
-    write_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_KEY)
-    if not write_key:
-        return jsonify({"error": "SUPABASE_SERVICE_ROLE_KEY not configured"}), 500
-
-    headers = {
-        "apikey": write_key, "Authorization": f"Bearer {write_key}",
-        "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates",
-    }
-
-    try:
-        psi = req.get(PSI_URL, timeout=15).json()["items"][0]
-        pm25 = req.get(PM25_URL, timeout=15).json()["items"][0]
-    except Exception as e:
-        return jsonify({"error": f"fetch failed: {e}"}), 502
-
-    ts = psi["timestamp"]
-    psi_24h = psi["readings"]["psi_twenty_four_hourly"]
-    pm25_24h = psi["readings"].get("pm25_twenty_four_hourly", {})
-    pm25_1h = pm25["readings"]["pm25_one_hourly"]
-
-    stored = 0
-    for region in REGIONS:
-        try:
-            r = req.post(f"{SUPABASE_URL}/rest/v1/readings", json={
-                "timestamp": ts, "region": region,
-                "psi_24h": psi_24h.get(region),
-                "pm25_24h": pm25_24h.get(region),
-                "pm25_1h": pm25_1h.get(region),
-            }, headers=headers, timeout=10)
-            if r.status_code in (200, 201, 204):
-                stored += 1
-        except Exception:
-            pass
-
-    return jsonify({"stored": stored, "timestamp": ts})
-
-
 @app.route("/")
 @app.route("/<path:path>")
 def serve_frontend(path="index.html"):
