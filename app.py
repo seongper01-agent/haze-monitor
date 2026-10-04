@@ -89,7 +89,10 @@ def _get_latest_data():
     if row and row["ts"]:
         rows = _sqlite_query("SELECT region, psi_24h, pm25_24h, pm25_1h FROM readings WHERE timestamp = ?", (row["ts"],))
         if rows:
+            app.logger.info("haze: source=sqlite ts=%s regions=%d", row["ts"], len(rows))
             return ({"timestamp": row["ts"], "regions": _rows_to_regions(rows)}, None)
+    else:
+        app.logger.debug("haze: sqlite unavailable (HAZE_DB_PATH=%s)", HAZE_DB_PATH or "not set")
 
     # 2. Supabase
     if SUPABASE_URL and SUPABASE_KEY:
@@ -107,12 +110,17 @@ def _get_latest_data():
                 )
                 regions = _rows_to_regions(r2.json())
                 if regions:
+                    app.logger.info("haze: source=supabase ts=%s regions=%d", ts, len(regions))
                     return ({"timestamp": ts, "regions": regions}, None)
-        except Exception:
-            pass
+        except Exception as e:
+            app.logger.warning("haze: supabase failed: %s", e)
 
     # 3. data.gov.sg live
-    return _fetch_live()
+    app.logger.info("haze: source=datagovsg (fallback)")
+    data, err = _fetch_live()
+    if data:
+        app.logger.info("haze: source=datagovsg ts=%s", data["timestamp"])
+    return data, err
 
 
 # ── Routes ──
