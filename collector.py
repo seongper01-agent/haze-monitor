@@ -1,33 +1,43 @@
 """
-Haze collector — fetches PSI/PM2.5 from data.gov.sg and stores in Supabase.
-Run: python collector.py
-Env vars needed: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+PSI/PM2.5 data collector — fetches from data.gov.sg and stores in SQLite.
+Run: .venv/bin/python collector.py
 """
-import os
-import sys
+import sqlite3
 import requests
+import sys
 from datetime import datetime
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+DB_PATH = "/home/seongper/haze-monitor/haze.db"
 PSI_URL = "https://api.data.gov.sg/v1/environment/psi"
 PM25_URL = "https://api.data.gov.sg/v1/environment/pm25"
 REGIONS = ["north", "south", "east", "central", "west"]
 
 
-def sb_headers():
-    return {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
-    }
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            region TEXT NOT NULL,
+            psi_24h INTEGER,
+            pm25_24h INTEGER,
+            pm25_1h INTEGER,
+            UNIQUE(timestamp, region)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_readings_ts ON readings(timestamp)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_readings_region ON readings(region)
+    """)
+    conn.commit()
+    return conn
 
 
 def fetch_and_store():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        print("ERROR: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set", file=sys.stderr)
-        sys.exit(1)
+    conn = init_db()
 
     try:
         psi_resp = requests.get(PSI_URL, timeout=15).json()
@@ -45,28 +55,25 @@ def fetch_and_store():
 
     stored = 0
     for region in REGIONS:
-        payload = {
-            "timestamp": ts,
-            "region": region,
-            "psi_24h": psi_24h.get(region),
-            "pm25_24h": pm25_24h.get(region),
-            "pm25_1h": pm25_1h.get(region),
-        }
         try:
-            r = requests.post(
-                f"{SUPABASE_URL}/rest/v1/readings",
-                json=payload,
-                headers=sb_headers(),
-                timeout=10,
-            )
-            if r.status_code in (200, 201, 204):
-                stored += 1
-            else:
-                print(f"WARN: store {region}: {r.status_code} {r.text}", file=sys.stderr)
+            conn.execute("""
+                INSERT OR REPLACE INTO readings (timestamp, region, psi_24h, pm25_24h, pm25_1h)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                ts,
+                region,
+                psi_24h.get(region),
+                pm25_24h.get(region),
+                pm25_1h.get(region)
+            ))
+            stored += 1
         except Exception as e:
             print(f"ERROR storing {region}: {e}", file=sys.stderr)
 
-    print(f"[{datetime.now().isoformat()}] Stored {stored}/{len(REGIONS)} readings for {ts}")
+    conn.commit()
+    conn.close()
+    print(f"[{datetime.now().isoformat()}] Stored {stored} readings for {ts}")
+    return stored
 
 
 if __name__ == "__main__":
