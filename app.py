@@ -1,8 +1,10 @@
 """
-Haze Monitor API — Vercel-ready Flask app.
-Data sources (tried in order): local SQLite → Supabase → data.gov.sg live.
+Haze Monitor API - Vercel-ready Flask app.
+Data sources (tried in order): local SQLite -> Supabase -> data.gov.sg live.
 """
 import os
+import sys
+import logging
 import sqlite3
 import requests as req
 from datetime import datetime, timedelta
@@ -10,14 +12,51 @@ from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__)
 
+# ── Logging to stderr ──
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setLevel(logging.DEBUG)
+_stderr_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%dT%H:%M:%S"
+))
+# Remove Flask's default handler to avoid duplicate output
+app.logger.handlers.clear()
+app.logger.addHandler(_stderr_handler)
+app.logger.setLevel(logging.DEBUG)
+
+# ── .env loader (zero-dependency) ──
+def _load_dotenv(env_path=None):
+    """Load key=value pairs from a .env file into os.environ (does not overwrite)."""
+    if env_path is None:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip()
+            if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                val = val[1:-1]
+            if key and key not in os.environ:
+                os.environ[key] = val
+
+_load_dotenv()
+
 # ── Config from env ──
-HAZE_DB_PATH = os.environ.get("HAZE_DB_PATH", "")
+HAZE_DB_PATH = os.path.expandvars(os.path.expanduser(
+    os.environ.get("HAZE_DB_PATH", "")))
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 PSI_URL = "https://api.data.gov.sg/v1/environment/psi"
 PM25_URL = "https://api.data.gov.sg/v1/environment/pm25"
 REGIONS = ["north", "south", "east", "central", "west"]
 LABELS = {"north": "North", "south": "South", "east": "East", "central": "Central", "west": "West"}
+
+app.logger.info("haze: startup — Supabase %s, SQLite %s",
+                "configured" if (SUPABASE_URL and SUPABASE_KEY) else "not configured",
+                f"at {HAZE_DB_PATH}" if (HAZE_DB_PATH and os.path.exists(HAZE_DB_PATH)) else "unavailable")
 
 
 # ── Helpers ──
@@ -51,8 +90,15 @@ def _sqlite_query(query, params=(), fetch_one=False):
 
 
 def _rows_to_regions(rows):
+    """Convert Supabase/SQLite rows to {region: {psi_24h, pm25_24h, pm25_1h, band}}."""
+    if not isinstance(rows, list):
+        app.logger.warning("haze: _rows_to_regions expected list, got %s", type(rows).__name__)
+        return {}
     regions = {}
     for row in rows:
+        if not isinstance(row, dict):
+            app.logger.warning("haze: _rows_to_regions skipping non-dict row: %s", type(row).__name__)
+            continue
         regions[row["region"]] = {
             "psi_24h": row.get("psi_24h"), "pm25_24h": row.get("pm25_24h"),
             "pm25_1h": row.get("pm25_1h"), "band": psi_band(row.get("psi_24h")),
@@ -82,7 +128,7 @@ def _fetch_live():
 # ── Data source cascade ──
 
 def _get_latest_data():
-    """Try SQLite → Supabase → data.gov.sg. Returns (data_dict, error_msg)."""
+    """Try SQLite -> Supabase -> data.gov.sg. Returns (data_dict, error_msg)."""
 
     # 1. Local SQLite
     row = _sqlite_query("SELECT MAX(timestamp) as ts FROM readings", fetch_one=True)
@@ -96,24 +142,41 @@ def _get_latest_data():
 
     # 2. Supabase
     if SUPABASE_URL and SUPABASE_KEY:
+        app.logger.info("haze: attempting Supabase connection to %s", SUPABASE_URL)
         try:
             r = req.get(
-                f"{SUPABASE_URL}/rest/v1/readings?select=timestamp&order=timestamp.desc&limit=1",
+                f"{SUPABASE_URL}/rest/v1/readings",
+                params={"select": "timestamp", "order": "timestamp.desc", "limit": "1"},
                 headers=sb_headers(), timeout=8
             )
+            app.logger.info("haze: Supabase connection OK (HTTP %d)", r.status_code)
             rows = r.json()
-            if rows:
-                ts = rows[0]["timestamp"]
-                r2 = req.get(
-                    f"{SUPABASE_URL}/rest/v1/readings?timestamp=eq.{ts}",
-                    headers=sb_headers(), timeout=8
-                )
-                regions = _rows_to_regions(r2.json())
-                if regions:
-                    app.logger.info("haze: source=supabase ts=%s regions=%d", ts, len(regions))
-                    return ({"timestamp": ts, "regions": regions}, None)
+            if isinstance(rows, list) and rows:
+                ts = rows[0].get("timestamp") if isinstance(rows[0], dict) else None
+                if ts:
+                    r2 = req.get(
+                        f"{SUPABASE_URL}/rest/v1/readings",
+                        params={"timestamp": f"eq.{ts}"},
+                        headers=sb_headers(), timeout=8
+                    )
+                    app.logger.info("haze: Supabase data retrieval OK (HTTP %d), %d rows", r2.status_code, len(r2.json()) if isinstance(r2.json(), list) else 0)
+                    regions = _rows_to_regions(r2.json())
+                    if regions:
+                        app.logger.info("haze: source=supabase ts=%s regions=%d", ts, len(regions))
+                        return ({"timestamp": ts, "regions": regions}, None)
+                    else:
+                        app.logger.warning("haze: Supabase data retrieval returned empty regions")
+                else:
+                    app.logger.warning("haze: Supabase returned no timestamp in latest row")
+            else:
+                app.logger.warning("haze: Supabase returned unexpected shape: %s",
+                                   type(rows).__name__ if not isinstance(rows, list) else f"list({len(rows)})")
         except Exception as e:
-            app.logger.warning("haze: supabase failed: %s", e)
+            app.logger.error("haze: Supabase connection/data retrieval FAILED: %s", e)
+    else:
+        app.logger.debug("haze: Supabase skipped (SUPABASE_URL=%s, SUPABASE_KEY=%s)",
+                         "set" if SUPABASE_URL else "not set",
+                         "set" if SUPABASE_KEY else "not set")
 
     # 3. data.gov.sg live
     app.logger.info("haze: source=datagovsg (fallback)")
@@ -172,17 +235,24 @@ def history():
         (region, cutoff)
     )
     if rows is not None:
+        app.logger.info("haze history: source=sqlite region=%s hours=%d points=%d", region, h, len(rows))
         return jsonify({"region": region, "points": rows})
 
     # 2. Supabase
     if SUPABASE_URL:
+        app.logger.info("haze history: attempting Supabase connection to %s", SUPABASE_URL)
         try:
             r = req.get(
-                f"{SUPABASE_URL}/rest/v1/readings?region=eq.{region}&timestamp=gte.{cutoff}&order=timestamp.asc",
+                f"{SUPABASE_URL}/rest/v1/readings",
+                params={"region": f"eq.{region}", "timestamp": f"gte.{cutoff}", "order": "timestamp.asc"},
                 headers=sb_headers(), timeout=10
             )
-            return jsonify({"region": region, "points": r.json()})
+            data = r.json()
+            app.logger.info("haze history: Supabase data retrieval OK (HTTP %d), %d points",
+                           r.status_code, len(data) if isinstance(data, list) else 0)
+            return jsonify({"region": region, "points": data})
         except Exception as e:
+            app.logger.error("haze history: Supabase connection/data retrieval FAILED: %s", e)
             return jsonify({"region": region, "points": [], "error": str(e)})
 
     return jsonify({"region": region, "points": [], "note": "No data source configured"})
