@@ -225,17 +225,25 @@ def summary():
 
 @app.route("/api/haze/history")
 def history():
-    h = request.args.get("hours", 24, type=int)
     region = request.args.get("region", "central")
+    start = request.args.get("start")
+    end = request.args.get("end")
+
+    if start and end:
+        cutoff_start = start
+        cutoff_end = end
+    else:
+        h = request.args.get("hours", 24, type=int)
+        cutoff_end = (datetime.utcnow()).isoformat() + "+08:00"
+        cutoff_start = (datetime.utcnow() - timedelta(hours=h+8)).isoformat() + "+08:00"
 
     # 1. Local SQLite
-    cutoff = (datetime.utcnow() - timedelta(hours=h+8)).isoformat() + "+08:00"
     rows = _sqlite_query(
-        "SELECT timestamp, psi_24h, pm25_24h, pm25_1h FROM readings WHERE region = ? AND timestamp >= ? ORDER BY timestamp ASC",
-        (region, cutoff)
+        "SELECT timestamp, psi_24h, pm25_24h, pm25_1h FROM readings WHERE region = ? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
+        (region, cutoff_start, cutoff_end)
     )
     if rows is not None:
-        app.logger.info("haze history: source=sqlite region=%s hours=%d points=%d", region, h, len(rows))
+        app.logger.info("haze history: source=sqlite region=%s start=%s end=%s points=%d", region, cutoff_start, cutoff_end, len(rows))
         return jsonify({"region": region, "points": rows})
 
     # 2. Supabase
@@ -244,7 +252,12 @@ def history():
         try:
             r = req.get(
                 f"{SUPABASE_URL}/rest/v1/readings",
-                params={"region": f"eq.{region}", "timestamp": f"gte.{cutoff}", "order": "timestamp.asc"},
+                params={
+                    "region": f"eq.{region}",
+                    "timestamp": f"gte.{cutoff_start}",
+                    "and": f"(timestamp.lte.{cutoff_end})",
+                    "order": "timestamp.asc",
+                },
                 headers=sb_headers(), timeout=10
             )
             data = r.json()

@@ -329,8 +329,12 @@
         canvas.style.height = H + 'px';
         ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
-        const hours = chartGran === 'daily' ? 720 : 24;
-        const url = API_BASE + '/history?hours=' + hours + '&region=' + chartRegion;
+        const now = new Date();
+        const days = chartGran === 'daily' ? 30 : 1;
+        const startDate = new Date(now.getTime() - days * 24 * 3600 * 1000);
+        const endStr = now.toISOString().replace('Z', '+08:00');
+        const startStr = startDate.toISOString().replace('Z', '+08:00');
+        const url = API_BASE + '/history?start=' + encodeURIComponent(startStr) + '&end=' + encodeURIComponent(endStr) + '&region=' + chartRegion;
         const points = [];
         try {
             const res = await fetch(url);
