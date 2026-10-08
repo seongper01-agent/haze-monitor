@@ -329,26 +329,36 @@
         canvas.style.height = H + 'px';
         ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
+        function toSGT(d) {
+            const s = d.toLocaleString('sv-SE', { timeZone: 'Asia/Singapore' });
+            return s.replace(' ', 'T') + '+08:00';
+        }
+
         const now = new Date();
         const days = chartGran === 'daily' ? 30 : 1;
         const startDate = new Date(now.getTime() - days * 24 * 3600 * 1000);
-        const endStr = now.toISOString().replace('Z', '+08:00');
-        const startStr = startDate.toISOString().replace('Z', '+08:00');
+        const endStr = toSGT(now);
+        const startStr = toSGT(startDate);
         const url = API_BASE + '/history?start=' + encodeURIComponent(startStr) + '&end=' + encodeURIComponent(endStr) + '&region=' + chartRegion;
         const points = [];
         try {
             const res = await fetch(url);
             const data = await res.json();
-            for (const p of (data.points || [])) {
-                const t = new Date(p.timestamp);
-                if (chartGran === 'daily') {
-                    if (t.getHours() === 12) {
-                        points.push({ t: t, v: p.psi_24h });
-                    }
-                } else {
-                    points.push({ t: t, v: p.psi_24h });
-                }
-            }
+            // Parse hour directly from timestamp string (avoids browser timezone)
+function getHour(ts) {
+    return parseInt(ts.split('T')[1].split(':')[0]);
+}
+
+for (const p of (data.points || [])) {
+    const t = new Date(p.timestamp);
+    if (chartGran === 'daily') {
+        if (getHour(p.timestamp) === 12) {
+            points.push({ t: t, v: p.psi_24h, raw_ts: p.timestamp });
+        }
+    } else {
+        points.push({ t: t, v: p.psi_24h, raw_ts: p.timestamp });
+    }
+}
         } catch(e) {}
 
         if (points.length < 2) {
@@ -433,7 +443,7 @@
             const x = 50 + ((p.t - minT) / range) * (W - 70);
             const label = chartGran === 'daily'
                 ? p.t.getDate() + '/' + (p.t.getMonth()+1)
-                : p.t.getHours() + ':00';
+                : getHour(points[idx].raw_ts || '') + ':00';
             ctx.fillText(label, x, H - 10);
         }
     }
