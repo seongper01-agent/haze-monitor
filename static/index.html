@@ -249,6 +249,19 @@
         <div class="chart-container">
             <canvas id="trend-chart"></canvas>
         </div>
+
+        <div class="section-title">ASEAN Haze Map</div>
+        <p style="text-align:center;color:var(--text-muted);font-size:0.8rem;margin-bottom:0.5rem">
+            Source: ASMC — ASEAN Specialised Meteorological Centre
+        </p>
+        <div class="chart-container" style="padding:0;overflow:hidden;height:520px">
+            <iframe
+                src="https://wis2.asmc.asean.org/regional-haze-situation/"
+                style="width:100%;height:100%;border:none"
+                title="ASEAN Regional Haze Map"
+                loading="lazy">
+            </iframe>
+        </div>
     </div>
 
     <script>
