@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Haze Monitor — Singapore PSI & PM2.5</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#8b5cf6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Haze Monitor">
+    <link rel="apple-touch-icon" href="/static/icon-192.png">
+
     <style>
         :root {
             --bg: #0a0a0f;
@@ -529,6 +538,11 @@ for (const p of (data.points || [])) {
         clearTimeout(resizeTimeout);
         resizeTimeout = setTimeout(fetchData, 500);
     });
+
+    // Register service worker for PWA
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/static/sw.js');
+    }
     </script>
 </body>
 </html>
