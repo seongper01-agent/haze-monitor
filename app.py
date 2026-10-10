@@ -195,6 +195,11 @@ def add_cors(response):
     return response
 
 
+@app.route("/api/config")
+def config():
+    return jsonify({"windy_api_key": os.environ.get("WINDY_API", "")})
+
+
 @app.route("/api/haze/latest")
 def latest():
     data, err = _get_latest_data()

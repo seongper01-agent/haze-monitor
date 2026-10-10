@@ -274,17 +274,33 @@
     <script src="https://api.windy.com/assets/map-forecast/libBoot.js"></script>
     <style>#windy { width:100%;height:100%; }</style>
     <script>
+    // Remove hardcoded key — fetch from API
     (function() {
-        windyInit({
-            key: 'PsLAtXpsPTZexBwUkO7Mx5I',
-            lat: 1.35,
-            lon: 103.82,
-            zoom: 8,
-        }, windyAPI => {
-            const { store } = windyAPI;
-            store.set('overlay', 'dustMass');
-            store.set('level', 'surface');
-        });
+        fetch('/api/config')
+            .then(r => r.json())
+            .then(cfg => {
+                windyInit({
+                    key: cfg.windy_api_key || 'PsLAtXpsPTZexBwUkO7Mx5I',
+                    lat: 1.35,
+                    lon: 103.82,
+                    zoom: 8,
+                }, windyAPI => {
+                    const { store } = windyAPI;
+                    store.set('overlay', 'dustMass');
+                    store.set('level', 'surface');
+                });
+            })
+            .catch(() => {
+                // Fallback if config fetch fails
+                windyInit({
+                    key: 'PsLAtXpsPTZexBwUkO7Mx5I',
+                    lat: 1.35, lon: 103.82, zoom: 8,
+                }, windyAPI => {
+                    const { store } = windyAPI;
+                    store.set('overlay', 'dustMass');
+                    store.set('level', 'surface');
+                });
+            });
     })();
     </script>
 
